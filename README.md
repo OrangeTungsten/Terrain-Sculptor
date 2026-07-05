@@ -24,6 +24,7 @@ Currently working on **Raster heightmap export** — the painted 2D data will be
 
 ## Running Locally
  
-No installation required,  just open the file directly
-open terrain-sculptor.html, or serve it statically for GitHub Pages / any static host — the file has no server dependencies.
+No installation required,  just open the file **index.html** directly in your browser, or
+
+## [RUN IT FROM HERE](https://orangetungsten.github.io/Terrain-Sculptor/index.html)
  

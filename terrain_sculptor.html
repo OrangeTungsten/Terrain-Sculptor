@@ -1,0 +1,854 @@
+<!--
+╔══════════════════════════════════════════════════════════════╗
+║                     TERRAIN SCULPTOR                         ║
+╠══════════════════════════════════════════════════════════════╣
+║  Description : Interactive heightmap sculpting tool with     ║
+║                live 2D/3D preview. Exports XYZ data as       ║
+║                JSON / XLSX for downstream pipelines.         ║
+║  Author      : Avram Kovačević                               ║
+║  Created     : Jul, 2026                                     ║
+║  Version     : 1.0                                           ║
+║  License     : MIT                                           ║
+╠══════════════════════════════════════════════════════════════╣
+║  Dependencies: three.js (r128), xlsx (SheetJS 0.18.5)        ║
+║                — loaded via cdnjs, no build step required    ║
+╚══════════════════════════════════════════════════════════════╝
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terrain Builder — Heightmap Sculptor</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+
+    :root{
+        --bg-deep:#0a1420;
+        --bg-panel:#0f1c2b;
+        --bg-panel-2:#132437;
+        --grid-line:#1f3b56;
+        --grid-line-strong:#2c5578;
+        --cyan:#52cdfa;
+        --amber:#ffb454;
+        --text-primary:#e7f1f8;
+        --text-muted:#7d95ab;
+        --border:#1c3448;
+    }
+
+    *{
+        box-sizing:border-box;
+    }
+
+    html,body{
+        margin:0; padding:0; height:100%;
+        background:
+        radial-gradient(1200px 600px at 15% -10%, #12263a 0%, transparent 60%),
+        radial-gradient(900px 500px at 110% 10%, #0f2233 0%, transparent 55%),
+        var(--bg-deep);
+        color:var(--text-primary);
+        font-family:'Segoe UI', system-ui, -apple-system, sans-serif;
+        overflow:hidden;
+    }
+
+    .app{
+        display:flex; flex-direction:column;
+        height:100vh; width:100vw;
+    }
+
+    header{
+        display:flex; align-items:baseline; gap:12px;
+        padding:14px 20px 10px 20px;
+        border-bottom:1px solid var(--border);
+        flex-shrink:0;
+    }
+
+    header .eyebrow{
+        font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+        color:var(--cyan); font-weight:600;
+    }
+
+    header h1{
+        font-size:11px; margin:0; font-weight:500; letter-spacing:.10em;
+    }
+
+    header .sub{
+        font-size:12px; color:var(--text-muted); margin-left:auto;
+        font-family:ui-monospace, 'SFMono-Regular', Consolas, monospace;
+    }
+
+    .main{
+        flex:1; display:flex; min-height:0;
+    }
+
+    .panel-left{
+        width:min(46vw, 420px);
+        display:flex; flex-direction:column;
+        border-right:1px solid var(--border);
+        background:var(--bg-panel);
+        min-width:380px;
+        overflow-y: auto
+    }
+
+    .panel-right{
+        flex:1; position:relative; background:#081019;
+        min-width:0;
+    }
+
+    .toolbar{
+        padding:12px 16px; border-bottom:1px solid var(--border);
+        display:flex; flex-wrap:wrap; gap:10px 16px;
+        background:var(--bg-panel-2);
+        flex-shrink:0;
+    }
+
+    .field{
+        display:flex; flex-direction:column; gap:3px;
+    }
+
+    .field label{
+        font-size:10px; text-transform:uppercase; letter-spacing:.08em;
+        color:var(--text-muted); font-weight:600;
+    }
+
+    .field input[type=number], .field select{
+        width:64px; background:#0c1826; border:1px solid var(--border);
+        color:var(--text-primary); border-radius:5px; padding:5px 6px;
+        font-family:ui-monospace, Consolas, monospace; font-size:12px;
+    }
+
+    .field input[type=range]{
+        width:100px; accent-color:var(--cyan);
+    }
+
+    .btn{
+        background:#123049; border:1px solid var(--grid-line-strong);
+        color:var(--text-primary); border-radius:6px; padding:7px 12px;
+        font-size:12px; font-weight:600; cursor:pointer;
+        transition:background .15s, border-color .15s;
+        letter-spacing:.01em;
+    }
+
+    .btn:hover{
+        background:#184066; border-color:var(--cyan);
+    }
+
+    .btn.primary{
+        background:#1d5b82; border-color:var(--cyan); color:#eafcff;
+    }
+    
+    .btn.primary:hover{
+        background:#237299;
+    }
+
+    .btn.warn{
+        border-color:#7a4a2a;
+    }
+
+    .btn.warn:hover{
+        background:#3a2313; border-color:var(--amber);
+    }
+
+    .row-btns{
+        display:flex; gap:8px; align-items:flex-end;
+    }
+
+    .canvas-wrap{
+        flex:1; 
+        display:flex; 
+        align-items:center; 
+        justify-content:center;
+        padding:24px 24px 24px 24px;
+    }
+
+    #grid2d{
+        background:#0c1826;
+        border:1px solid var(--grid-line-strong);
+        border-radius:8px;
+        cursor:crosshair;
+        touch-action:none;
+    }
+
+    .legend-row{
+        display:flex; align-items:center; gap:10px;
+        padding:0px 18px 18px 18px; flex-shrink:0;
+    }
+
+    #legendbar{
+        height:10px; flex:1; border-radius:5px; border:1px solid var(--grid-line-strong);
+    }
+
+    .legend-row span{
+        font-size:11px; color:var(--text-muted); font-family:ui-monospace, Consolas, monospace;
+    }
+
+    .info-strip{
+        padding:8px 20px;
+        border-top:1px solid var(--border);
+        display:flex;
+        justify-content: center;
+        gap:20px; 
+        flex-wrap:wrap;
+        background:var(--bg-panel-2); 
+        flex-shrink:0;
+    }
+
+    .info-strip .stat{
+        font-size:11px; color:var(--text-muted);
+    }
+
+    .info-strip .stat b{
+        display:block; font-size:14px; color:var(--text-primary);
+        font-family:ui-monospace, Consolas, monospace; font-weight:600;
+    }
+
+    .help{
+        padding:10px 16px 14px 16px; font-size:11.5px; color:var(--text-muted);
+        line-height:1.6; border-top:1px solid var(--border); flex-shrink:0;
+    }
+
+    .help b{
+        color:var(--text-primary);
+    }
+
+    .help .key{
+        display:inline-block; background:#0c1826; border:1px solid var(--grid-line-strong);
+        border-radius:4px; padding:1px 6px; font-family:ui-monospace,Consolas,monospace;
+        color:var(--cyan); font-size:11px;
+    }
+
+    #canvas3d{
+        width:100%; height:100%; display:block;
+    }
+
+    .viewport-hint{
+        position:absolute; top:14px; left:16px; font-size:11px; color:var(--text-muted);
+        background:rgba(10,20,32,0.55); border:1px solid var(--border); border-radius:6px;
+        padding:6px 10px; pointer-events:none; font-family:ui-monospace,Consolas,monospace;
+    }
+
+    .viewport-controls{
+        position:absolute; top:14px; right:16px; display:flex; gap:8px;
+    }
+
+    #fileInput{
+        display:none;
+    }
+
+    .toast{
+        position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+        background:#123049; border:1px solid var(--cyan); color:var(--text-primary);
+        padding:10px 18px; border-radius:8px; font-size:13px; font-weight:600;
+        box-shadow:0 4px 16px rgba(0,0,0,0.4); opacity:0; pointer-events:none;
+        transition:opacity .25s ease; z-index:1000;
+    }
+    
+    .toast.show{
+        opacity:1;
+    }
+
+</style>
+</head>
+
+<body>
+<div class="app">
+
+    <div id="toast" class="toast"></div>
+
+    <header>
+        <span class="eyebrow">Heightmap Sculptor</span>
+        <h1>TERRAIN BUILDER</h1>
+    </header>
+
+    <div class="main">
+
+        <div class="panel-left">
+
+            <div class="toolbar">
+            
+                <div class="field">
+                <label>X</label>
+                <input type="number" id="cols" min="4" max="80" value="24">
+                </div>
+
+                <div class="field">
+                <label>Y</label>
+                <input type="number" id="rows" min="4" max="80" value="24">
+                </div>
+
+                <div class="field">
+                <label>Min</label>
+                <input type="number" id="minHeight"  value="0">
+                </div>
+
+                <div class="field">
+                <label>Max</label>
+                <input type="number" id="maxHeight"  value="30">
+                </div>
+
+                <div class="row-btns">
+                <button class="btn primary" id="btnRebuild">New</button>
+                </div>
+
+            </div>
+            
+            
+            <div class="toolbar">
+
+                <div class="field">
+                <label>Brush</label>
+                <input type="number" id="brush" min="0" step="1" value="2">
+                </div>
+
+                <div class="field">
+                <label>Stregth</label>
+                <input type="number" id="strength" min="0.05" max="2" step="0.05" value="0.5">
+                </div>
+                
+                <div class="field">
+                <label>Z scale</span></label>
+                <input type="number" id="vscale" min="0.02" max="2" step="0.02" value="0.1">
+                </div>
+                
+            </div>
+
+
+            <div class="canvas-wrap">
+                <canvas id="grid2d"></canvas>
+            </div>
+
+            <div class="legend-row">
+                <span id="legendMin">0</span>
+                <div id="legendbar"></div>
+                <span id="legendMax">0</span>
+            </div>
+
+            <div class="info-strip">
+                <div class="stat">Field<b id="statCell">—</b></div>
+                <div class="stat">Height<b id="statHeight">—</b></div>
+            </div>
+
+
+            <div class="toolbar" style="border-top:1px solid var(--border); border-bottom:none; justify-items: center;">
+                <button class="btn primary" id="btnExportXlsx">Export XLSX</button>
+                <button class="btn primary" id="btnExportJson">Export JSON</button>
+                <button class="btn" id="btnImport">Load JSON</button>
+                <input type="file" id="fileInput" accept="application/json">
+            </div>
+
+        </div>
+
+        
+        <div class="panel-right">
+            <canvas id="canvas3d"></canvas>
+            <div class="viewport-hint">3D view · click and drag · right click to delete · use wheel for fine adjustments · by Avram Kovacevic</div>
+        </div>
+
+        
+    </div>
+</div>
+
+<script>
+
+(function(){
+
+    //Defaults
+    let cols = 24, rows = 24, minHeight = 0, maxHeight = 30, strength = 0.5, brushRadius = 2, vScale = 0.1;
+    let heights = new Float32Array(rows*cols);
+
+    const colsInput      =   document.getElementById('cols');
+    const rowsInput      =   document.getElementById('rows');
+    const minHInput      =   document.getElementById('minHeight');
+    const maxHInput      =   document.getElementById('maxHeight');
+    const strengthInput  =   document.getElementById('strength');
+    const brushInput     =   document.getElementById('brush');
+    const vscaleInput    =   document.getElementById('vscale');
+    const statCell       =   document.getElementById('statCell');
+    const statHeight     =   document.getElementById('statHeight');
+    const legendMax      =   document.getElementById('legendMax');
+    const legendMin      =   document.getElementById('legendMin');
+
+    function idx(r,c){
+        return r*cols + c;
+    }
+
+    //Terrain color code
+    const RAMP = [
+        [0.00, [40, 92, 74]],    // dolina
+        [0.30, [86, 148, 88]],   // trava
+        [0.58, [176, 150, 92]],  // zemlja / peščano
+        [0.82, [132, 132, 132]], // stena
+        [1.00, [244, 244, 244]]  // sneg
+    ];
+
+    function heightColor(t){
+        t = Math.max(0, Math.min(1, t));
+        for(let i=0;i<RAMP.length-1;i++){
+            const [t0,c0] = RAMP[i], [t1,c1] = RAMP[i+1];
+            if(t>=t0 && t<=t1){
+                const f = (t1===t0) ? 0 : (t-t0)/(t1-t0);
+                return [
+                Math.round(c0[0]+(c1[0]-c0[0])*f),
+                Math.round(c0[1]+(c1[1]-c0[1])*f),
+                Math.round(c0[2]+(c1[2]-c0[2])*f)
+                ];
+            }
+        }
+        return RAMP[RAMP.length-1][1];
+    }
+
+    function buildLegendCss(){
+        const stops = RAMP.map(s => `rgb(${s[1][0]},${s[1][1]},${s[1][2]}) ${s[0]*100}%`).join(',');
+        document.getElementById('legendbar').style.background = `linear-gradient(90deg, ${stops})`;
+    }
+
+    buildLegendCss();
+
+    //2D canvas (edit)
+    const c2d = document.getElementById('grid2d');
+    const ctx = c2d.getContext('2d');
+    let cellW, cellH, dpr = Math.max(1, window.devicePixelRatio||1);
+
+    function layoutCanvas2D(){
+
+        const wrap = c2d.parentElement.getBoundingClientRect();
+        const maxW = Math.max(40, wrap.width - 4);
+        const maxCell = 620 / Math.max(cols, rows);
+        const cell = Math.min(maxW/cols, maxCell)*0.6;
+        const w = cell*cols, h = cell*rows;
+        c2d.style.width = w+'px';
+        c2d.style.height = h+'px';
+        c2d.width = Math.round(w*dpr);
+        c2d.height = Math.round(h*dpr);
+        ctx.setTransform(dpr,0,0,dpr,0,0);
+        cellW = cell;
+        cellH = cell;
+        draw2D();
+
+    }
+
+    function draw2D(){
+
+        const w = c2d.width/dpr, h = c2d.height/dpr;
+        ctx.clearRect(0,0,w,h);
+        for(let r=0;r<rows;r++){
+            for(let c=0;c<cols;c++){
+                const val = heights[idx(r,c)];
+                const t = (val - minHeight) / (maxHeight - minHeight || 1);
+                const [R,G,B] = heightColor(t);
+                ctx.fillStyle = `rgb(${R},${G},${B})`;
+                ctx.fillRect(c*cellW, r*cellH, cellW+0.6, cellH+0.6);
+            }
+        }
+
+        //Grid lines
+        ctx.strokeStyle = 'rgba(10,20,32,0.35)';
+        ctx.lineWidth = 1;
+        for(let c=0;c<=cols;c++){
+            ctx.beginPath(); ctx.moveTo(c*cellW,0); ctx.lineTo(c*cellW,h); ctx.stroke();
+        }
+        for(let r=0;r<=rows;r++){
+            ctx.beginPath(); ctx.moveTo(0,r*cellH); ctx.lineTo(w,r*cellH); ctx.stroke();
+        }
+
+        //Hover highlight
+        if(hover.r>=0){
+            ctx.strokeStyle = '#4fd1ff';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(hover.c*cellW+1, hover.r*cellH+1, cellW-2, cellH-2);
+            if(brushRadius>0){
+                ctx.strokeStyle = 'rgba(79,209,255,0.35)';
+                ctx.beginPath();
+                ctx.ellipse((hover.c+0.5)*cellW, (hover.r+0.5)*cellH, brushRadius*cellW, brushRadius*cellH, 0, 0, Math.PI*2);
+                ctx.stroke();
+            }
+        }
+    }
+
+    //Mouse interaction
+    const hover = {r:-1, c:-1};
+    let painting = false, paintSign = 1;
+    let lastTick = 0;
+    const TICK_MS = 85;
+
+    function clientToCell(evt){
+        const rect = c2d.getBoundingClientRect();
+        const x = evt.clientX - rect.left;
+        const y = evt.clientY - rect.top;
+        const c = Math.floor(x/cellW), r = Math.floor(y/cellH);
+        return {r: Math.max(0,Math.min(rows-1,r)), c: Math.max(0,Math.min(cols-1,c))};
+    }
+
+    function applyBrush(r0, c0, sign){
+        const R = brushRadius;
+        let changed = false;
+        for(let dr=-R; dr<=R; dr++){
+            for(let dc=-R; dc<=R; dc++){
+                const r = r0+dr, c = c0+dc;
+                if(r<0||r>=rows||c<0||c>=cols) continue;
+                const dist = Math.sqrt(dr*dr+dc*dc);
+                if(dist > R+0.001) continue;
+                const falloff = R===0 ? 1 : Math.max(0, 1 - dist/(R+1));
+                const i = idx(r,c);
+                const nv = heights[i] + sign*strength*falloff;
+                heights[i] = Math.max(minHeight, Math.min(maxHeight, nv));
+                changed = true;
+            }
+        }
+
+        if(changed){
+            dirty3d = true;
+        }
+    }
+
+    c2d.addEventListener('contextmenu', e => e.preventDefault());
+
+    c2d.addEventListener('mousedown', e => {
+        const cell = clientToCell(e);
+        hover.r = cell.r; hover.c = cell.c;
+        painting = true;
+        paintSign = (e.button===2 || e.shiftKey) ? -1 : 1;
+        applyBrush(cell.r, cell.c, paintSign);
+        lastTick = performance.now();
+        draw2D();
+    });
+
+    window.addEventListener('mouseup', () => {
+        painting = false;
+    });
+
+    c2d.addEventListener('mousemove', e => {
+        const cell = clientToCell(e);
+        hover.r = cell.r; hover.c = cell.c;
+        statCell.textContent = `(${cell.c}, ${cell.r})`;
+        statHeight.textContent = heights[idx(cell.r,cell.c)].toFixed(2);
+
+        if(painting){
+            applyBrush(cell.r, cell.c, paintSign);
+            lastTick = performance.now();
+        }
+
+        draw2D();
+    });
+
+    c2d.addEventListener('mouseleave', () => {
+        hover.r=-1; hover.c=-1; draw2D();
+    });
+
+    c2d.addEventListener('wheel', e => {
+        e.preventDefault();
+        const cell = clientToCell(e);
+        const sign = e.deltaY < 0 ? 1 : -1;
+        const i = idx(cell.r, cell.c);
+        heights[i] = Math.max(minHeight, Math.min(maxHeight, heights[i] + sign*strength));
+        dirty3d = true;
+        statHeight.textContent = heights[i].toFixed(2);
+        draw2D();
+    }, {passive:false});
+
+    brushInput.addEventListener('input', () => {
+        brushRadius = parseInt(brushInput.value,10);
+        draw2D();
+    });
+
+    vscaleInput.addEventListener('input', () => {
+        vScale = parseFloat(vscaleInput.value);
+        dirty3d = true;
+    });
+
+    strengthInput.addEventListener('change', () => { strength = Math.max(0.1, parseFloat(strengthInput.value)||1); });
+
+
+    //Rebuild
+    document.getElementById('btnRebuild').addEventListener('click', () => {
+
+        const nc = Math.max(4, Math.min(80, parseInt(colsInput.value,10)||24));
+        const nr = Math.max(4, Math.min(80, parseInt(rowsInput.value,10)||24));
+        const nmh = parseFloat(maxHInput.value)||20;
+        const nmin = parseFloat(minHInput.value)||0;
+
+        if(nmin >= nmh){
+            alert('Min. height must be < than Max. height.'); return;
+        }
+
+        if((nc!==cols || nr!==rows) && heights.some(v=>v>0)){
+            if(!confirm('Clear and proceed?')) return;
+        }
+
+        cols = nc; rows = nr; 
+        maxHeight = nmh; minHeight = nmin;
+        colsInput.value = cols; rowsInput.value = rows;
+        maxHInput.value = maxHeight; minHInput.value = minHeight;
+        heights = new Float32Array(rows*cols).fill(minHeight);
+        legendMax.textContent = maxHeight;
+        legendMin.textContent = minHeight;
+
+        buildGeometry();
+        layoutCanvas2D();
+    });
+
+    window.addEventListener('resize', layoutCanvas2D);
+
+    //3D Scene
+    const canvas3d = document.getElementById('canvas3d');
+    const renderer = new THREE.WebGLRenderer({canvas: canvas3d, antialias:true});
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x081019);
+    scene.fog = new THREE.Fog(0x081019, 30, 90);
+
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
+    const hemi = new THREE.HemisphereLight(0xbdd6ff, 0x1a2a1f, 0.9);
+    scene.add(hemi);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight.position.set(12, 18, 8);
+    scene.add(dirLight);
+    const fillLight = new THREE.DirectionalLight(0x4fd1ff, 0.15);
+    fillLight.position.set(-10,6,-10);
+    scene.add(fillLight);
+
+    const gridHelper = new THREE.GridHelper(24, 24, 0x2c5578, 0x152840);
+    gridHelper.position.y = -0.01;
+    scene.add(gridHelper);
+
+    let planeMesh = null;
+    let dirty3d = true;
+    const PLANE_SIZE = 20; // maksimalna dimenzija (duza strana) u world jedinicama
+    let cellSize3D = PLANE_SIZE / Math.max(rows, cols);
+
+    function buildGeometry(){
+
+        if(planeMesh){
+            scene.remove(planeMesh);
+            planeMesh.geometry.dispose();
+            planeMesh.material.dispose();
+        }
+
+        cellSize3D = PLANE_SIZE / Math.max(rows, cols);
+        const planeW = cellSize3D * cols;
+        const planeH = cellSize3D * rows;
+        const geo = new THREE.PlaneGeometry(planeW, planeH, cols-1, rows-1);
+        const count = (cols)*(rows);
+        const colorAttr = new Float32Array(count*3);
+        geo.setAttribute('color', new THREE.BufferAttribute(colorAttr, 3));
+        const mat = new THREE.MeshStandardMaterial({
+            vertexColors: true, flatShading: true, roughness:0.85, metalness:0.05, side: THREE.DoubleSide
+        });
+        planeMesh = new THREE.Mesh(geo, mat);
+        planeMesh.rotation.x = -Math.PI/2;
+        scene.add(planeMesh);
+        updateGeometry();
+
+    }
+
+    function updateGeometry(){
+
+        if(!planeMesh) return;
+        const pos = planeMesh.geometry.attributes.position;
+        const col = planeMesh.geometry.attributes.color;
+        let minV = Infinity, maxV = -Infinity;
+        const worldScale = cellSize3D * 0.9;
+
+        for(let i=0;i<heights.length;i++){
+            const v = heights[i];
+            if(v<minV) minV=v; if(v>maxV) maxV=v;
+            pos.setZ(i, v*worldScale*vScale);
+            const t = (v - minHeight) / (maxHeight - minHeight || 1);
+            const [R,G,B] = heightColor(t);
+            col.setXYZ(i, R/255, G/255, B/255);
+        }
+
+        pos.needsUpdate = true;
+        col.needsUpdate = true;
+        planeMesh.geometry.computeVertexNormals();
+        if(!isFinite(minV)) minV = 0;
+        dirty3d = false;
+
+    }
+
+    //Manual controls
+    let camTheta = 0, camPhi = Math.PI/4, camRadius = 26; //default view angle
+    const camTarget = new THREE.Vector3(0,1,0);
+    function updateCameraPos(){
+
+        const phi = Math.max(0.12, Math.min(Math.PI/2 - 0.05, camPhi));
+            camera.position.set(
+            camTarget.x + camRadius*Math.sin(phi)*Math.sin(camTheta),
+            camTarget.y + camRadius*Math.cos(phi),
+            camTarget.z + camRadius*Math.sin(phi)*Math.cos(camTheta)
+        );
+        camera.lookAt(camTarget);
+
+    }
+
+    updateCameraPos();
+
+    let dragging3d = false, lastX=0, lastY=0;
+    canvas3d.addEventListener('mousedown', e => { dragging3d = true; lastX=e.clientX; lastY=e.clientY; });
+    window.addEventListener('mouseup', () => dragging3d = false);
+    window.addEventListener('mousemove', e => {
+        if(!dragging3d) return;
+        const dx = e.clientX-lastX, dy = e.clientY-lastY;
+        lastX=e.clientX; lastY=e.clientY;
+        camTheta -= dx*0.0055;
+        camPhi -= dy*0.0055;
+        updateCameraPos();
+    });
+    canvas3d.addEventListener('wheel', e => {
+        e.preventDefault();
+        camRadius = Math.max(6, Math.min(60, camRadius + e.deltaY*0.02));
+        updateCameraPos();
+    }, {passive:false});
+
+    function layout3D(){
+        const rect = canvas3d.parentElement.getBoundingClientRect();
+        renderer.setSize(rect.width, rect.height, false);
+        camera.aspect = rect.width/Math.max(1,rect.height);
+        camera.updateProjectionMatrix();
+    }
+    window.addEventListener('resize', layout3D);
+
+
+    //MAIN LOOP
+    function loop(now){
+
+        if(painting && now-lastTick >= TICK_MS){
+            applyBrush(hover.r, hover.c, paintSign);
+            lastTick = now;
+            draw2D();
+        }
+
+        if(dirty3d) updateGeometry();
+        renderer.render(scene, camera);
+        requestAnimationFrame(loop);
+
+    }
+
+    //Export
+    function downloadBlob(content, filename, mime){
+
+        const blob = new Blob([content], {type:mime});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+
+    }
+
+    function showToast(msg){
+
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.classList.add('show');
+        clearTimeout(showToast._timer);
+        showToast._timer = setTimeout(() => t.classList.remove('show'), 2200);
+
+    }
+
+
+    function heights2D(){
+
+        const out = [];
+        for(let r=0;r<rows;r++){
+            const row = [];
+            for(let c=0;c<cols;c++) row.push(Number(heights[idx(r,c)].toFixed(4)));
+            out.push(row);
+        }
+
+        return out;
+
+    }
+
+    document.getElementById('btnExportJson').addEventListener('click', () => {
+        try{
+
+            const data = {rows, cols, minHeight, maxHeight, heights: heights2D()};
+            downloadBlob(JSON.stringify(data, null, 1), 'heightmap.json', 'application/json');
+            
+            showToast('Data succesfully converted for export!');
+
+        }catch(err){
+            showToast('Error: ' + err.message);
+        }
+    });
+
+    document.getElementById('btnExportXlsx').addEventListener('click', () => {
+
+        try{
+
+            const rowsOut = [['X','Y','Z']];
+            for(let y=0; y<rows; y++){
+                const r = rows-1-y; //Y=0
+                for(let x=0; x<cols; x++){
+                    rowsOut.push([x, y, Number(heights[idx(r,x)].toFixed(4))]);
+                }
+            }
+            const ws = XLSX.utils.aoa_to_sheet(rowsOut);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Heightmap');
+            XLSX.writeFile(wb, 'heightmap.xlsx');
+
+            showToast('Data succesfully converted for export!');
+
+        }catch(err){
+            showToast('Error: ' + err.message);
+        }
+
+    });
+
+    document.getElementById('btnImport').addEventListener('click', () => document.getElementById('fileInput').click());
+
+    document.getElementById('fileInput').addEventListener('change', e => {
+        const file = e.target.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+
+        reader.onload = () => {
+
+            try{
+
+                const data = JSON.parse(reader.result);
+                if(!data.rows || !data.cols || !Array.isArray(data.heights)) throw new Error('Wrong format');
+                rows = data.rows; cols = data.cols; 
+                maxHeight = data.maxHeight ?? 20;
+                minHeight = data.minHeight ?? 0;
+                colsInput.value = cols; rowsInput.value = rows; maxHInput.value = maxHeight;
+                legendMax.textContent = maxHeight;
+                legendMin.textContent = minHeight;
+
+                heights = new Float32Array(rows*cols).fill(minHeight);
+                for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) heights[idx(r,c)] = data.heights[r][c] || 0;
+                buildGeometry();
+                layoutCanvas2D();
+
+            }catch(err){
+                alert('Error during the file loading: '+err.message);
+            }
+
+        };
+
+        reader.readAsText(file);
+        e.target.value = '';
+
+    });
+
+    //Init
+    legendMax.textContent = maxHeight;
+    legendMin.textContent = minHeight;
+
+    buildGeometry();
+    layoutCanvas2D();
+    layout3D();
+    updateCameraPos();
+    requestAnimationFrame(loop);
+
+})();
+
+</script>
+</body>
+</html>
